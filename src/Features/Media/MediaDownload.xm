@@ -39,32 +39,47 @@ static void initDownloaders () {
 %new - (void)handleLongPress:(UILongPressGestureRecognizer *)sender {
     if (sender.state != UIGestureRecognizerStateBegan) return;
 
-    // Get photo instance
-    IGPhoto *photo;
+    NSURL *photoUrl = nil;
 
-    if ([self.delegate isKindOfClass:%c(IGFeedItemPhotoCell)]) {
-        IGFeedItemPhotoCellConfiguration *_configuration = MSHookIvar<IGFeedItemPhotoCellConfiguration *>(self.delegate, "_configuration");
-        if (!_configuration) return;
-
-        photo = MSHookIvar<IGPhoto *>(_configuration, "_photo");
-    }
-    else if ([self.delegate isKindOfClass:%c(IGFeedItemPagePhotoCell)]) {
-        IGFeedItemPagePhotoCell *pagePhotoCell = self.delegate;
-
-        photo = pagePhotoCell.pagePhotoPost.photo;
+    // 1. Try our direct FLEX discovery route first (safest for 437.x carousels)
+    if ([self respondsToSelector:@selector(imageSpecifier)]) {
+        IGImageSpecifier *specifier = [self imageSpecifier];
+        if (specifier && specifier.url) {
+            photoUrl = specifier.url;
+        }
     }
 
-    NSURL *photoUrl = [SCIUtils getPhotoUrl:photo];
+    // 2. If the direct specifier route fails, fall back to the original delegate methods
+    if (!photoUrl) {
+        IGPhoto *photo = nil;
+        if ([self.delegate isKindOfClass:%c(IGFeedItemPhotoCell)]) {
+            IGFeedItemPhotoCellConfiguration *_configuration = MSHookIvar<IGFeedItemPhotoCellConfiguration *>(self.delegate, "_configuration");
+            if (_configuration) {
+                photo = MSHookIvar<IGPhoto *>(_configuration, "_photo");
+            }
+        }
+        else if ([self.delegate isKindOfClass:%c(IGFeedItemPagePhotoCell)]) {
+            IGFeedItemPagePhotoCell *pagePhotoCell = self.delegate;
+            if ([pagePhotoCell respondsToSelector:@selector(pagePhotoPost)]) {
+                photo = pagePhotoCell.pagePhotoPost.photo;
+            }
+        }
+        
+        if (photo) {
+            photoUrl = [SCIUtils getPhotoUrl:photo];
+        }
+    }
+
+    // Error handling if both extraction attempts hit a dead end
     if (!photoUrl) {
         [SCIUtils showErrorHUDWithDescription:@"Could not extract photo url from post"];
-        
         return;
     }
 
-    // Download image & show in share menu
+    // Download image & pass it to the delivery engine
     initDownloaders();
     [imageDownloadDelegate downloadFileWithURL:photoUrl
-                                 fileExtension:[[photoUrl lastPathComponent]pathExtension]
+                                 fileExtension:[[photoUrl lastPathComponent] pathExtension]
                                       hudLabel:nil];
 }
 %end
